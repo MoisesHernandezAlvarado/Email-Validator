@@ -38,7 +38,7 @@ class EmailValidationService:
         'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'live.com',
         'aol.com', 'icloud.com', 'protonmail.com', 'zoho.com', 'mail.com'
     }
-
+    
     @staticmethod
     def validate_email_format_advanced(email: str) -> Dict[str, Any]:
         """Validación de formato ultra-avanzada con múltiples verificaciones"""
@@ -516,7 +516,9 @@ class EmailValidationService:
             "details": [],
             "server_info": {},
             "security_features": {},
-            "timing": {}
+            "timing": {},
+            "blocked_reason": None,
+            "ip_reputation_issue": False
         }
         
         start_time = time.time()
@@ -628,17 +630,33 @@ class EmailValidationService:
                 attempt["definitive"] = True
                 attempt["confidence"] = 90
                 
-                # Análizar mensaje para más detalles
-                if any(keyword in message_lower for keyword in ['mailbox full', 'quota exceeded', 'over quota']):
+                # Análisis específico para diferentes tipos de bloqueo
+                if any(keyword in message_lower for keyword in ['spamhaus', 'blacklist', 'blocklist', 'rbl']):
+                    attempt["ip_reputation_issue"] = True
+                    attempt["blocked_reason"] = "IP en lista negra (RBL/Spamhaus)"
+                    attempt["details"].append("IP bloqueada por reputación - no indica problema con el email")
+                    attempt["confidence"] = 75  # Alta confianza de que el email es válido
+                    
+                elif any(keyword in message_lower for keyword in ['client host', 'blocked using']):
+                    attempt["ip_reputation_issue"] = True
+                    attempt["blocked_reason"] = "Host cliente bloqueado"
+                    attempt["details"].append("Cliente bloqueado por políticas del servidor")
+                    attempt["confidence"] = 70
+                    
+                elif any(keyword in message_lower for keyword in ['mailbox full', 'quota exceeded', 'over quota']):
                     attempt["mailbox_full"] = True
                     attempt["exists"] = True
                     attempt["details"].append("Buzón lleno")
+                    
                 elif any(keyword in message_lower for keyword in ['user unknown', 'no such user', 'invalid recipient', 'user not found']):
                     attempt["details"].append("Usuario no existe")
+                    
                 elif any(keyword in message_lower for keyword in ['relay not permitted', 'relaying denied']):
                     attempt["details"].append("Retransmisión no permitida")
+                    
                 elif any(keyword in message_lower for keyword in ['spam', 'blocked', 'blacklist']):
                     attempt["details"].append("Email bloqueado por políticas anti-spam")
+                    
                 else:
                     attempt["details"].append("Email rechazado por el servidor")
                     
@@ -805,12 +823,24 @@ class EmailValidationService:
             try:
                 smtp_result = cls.validate_smtp_connection_ultra_robust(email)
                 result["smtp_analysis"] = smtp_result
+                
+                # Verificar si hay problemas de reputación de IP
+                ip_reputation_issue = any(
+                    attempt.get("ip_reputation_issue", False) 
+                    for attempt in smtp_result.get("attempts", [])
+                )
+                
                 if smtp_result["deliverable"]:
                     result["confidence_score"] += 35
                 elif smtp_result["exists"]:
                     result["confidence_score"] += 25
                     if smtp_result["mailbox_full"]:
                         result["warnings"].append("Buzón de correo lleno")
+                elif ip_reputation_issue:
+                    # Si hay problema de reputación de IP, el email probablemente es válido
+                    result["confidence_score"] += 20
+                    result["warnings"].append("Verificación SMTP limitada por reputación de IP del validador")
+                    
             except Exception as e:
                 result["warnings"].append(f"Error en análisis SMTP: {str(e)}")
             
@@ -839,20 +869,44 @@ class EmailValidationService:
             try:
                 recommendations = []
                 
-                if result["confidence_score"] >= 80:
-                    recommendations.append("Email altamente confiable para uso en producción")
-                elif result["confidence_score"] >= 60:
-                    recommendations.append("Email probablemente válido, verificar manualmente si es crítico")
-                elif result["confidence_score"] >= 40:
-                    recommendations.append("Email dudoso, considerar validación adicional")
-                else:
-                    recommendations.append("Email no recomendado para uso")
+                # Verificar si hay problemas de reputación de IP
+                ip_reputation_issue = any(
+                    attempt.get("ip_reputation_issue", False) 
+                    for attempt in smtp_result.get("attempts", [])
+                )
                 
+                if result["confidence_score"] >= 80:
+                    recommendations.append("✅ Email altamente confiable para uso en producción")
+                elif result["confidence_score"] >= 60:
+                    if ip_reputation_issue:
+                        recommendations.append("✅ Email probablemente válido - Limitación por IP del validador, no del email")
+                        recommendations.append("💡 Recomendación: Usar desde IP con mejor reputación para verificación completa")
+                    else:
+                        recommendations.append("✅ Email probablemente válido, verificar manualmente si es crítico")
+                elif result["confidence_score"] >= 40:
+                    recommendations.append("⚠️ Email dudoso, considerar validación adicional")
+                else:
+                    recommendations.append("❌ Email no recomendado para uso")
+                
+                # Recomendaciones específicas
                 if smtp_result.get("mailbox_full"):
-                    recommendations.append("Reintentar más tarde cuando el buzón esté disponible")
+                    recommendations.append("📧 Reintentar más tarde cuando el buzón esté disponible")
                 
                 if security_analysis.get("is_disposable"):
-                    recommendations.append("Considerar rechazar emails desechables según política")
+                    recommendations.append("🗑️ Considerar rechazar emails desechables según política")
+                
+                if ip_reputation_issue:
+                    blocked_reason = smtp_result.get("attempts", [{}])[0].get("blocked_reason", "")
+                    if blocked_reason:
+                        recommendations.append(f"🔒 Bloqueo detectado: {blocked_reason}")
+                    recommendations.append("🌐 Usar validador desde IP con mejor reputación para resultados más precisos")
+                
+                # Información sobre el dominio
+                if domain_result.get("exists") and mx_result.get("has_mx"):
+                    if security_analysis.get("is_major_provider"):
+                        recommendations.append("🏢 Dominio de proveedor principal reconocido")
+                    else:
+                        recommendations.append("🏛️ Dominio institucional/empresarial con infraestructura propia")
                 
                 if format_result.get("suggestions"):
                     recommendations.extend(format_result["suggestions"])
