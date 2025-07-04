@@ -201,6 +201,44 @@ async def validate_deep_email(email: str):
             detail=f"Error al validar el email: {str(e)}"
         )
 
+@router.get("/validate-ultra/{email}")
+async def validate_ultra_email(email: str):
+    """
+    Validación ULTRA-PROFUNDA que NUNCA falla - El scan más completo posible.
+    
+    - **email**: Dirección de correo electrónico a validar
+    - Análisis de formato avanzado con sugerencias
+    - Verificación DNS multi-servidor con IPv4/IPv6
+    - Análisis MX completo con prioridades
+    - Validación SMTP ultra-robusta con múltiples intentos
+    - Detección de seguridad y patrones sospechosos
+    - Puntuación de confianza de 0-100
+    - Recomendaciones inteligentes
+    - Nunca falla, siempre retorna un resultado
+    """
+    try:
+        result = EmailValidationService.validate_email_ultra_deep(email)
+        return result
+        
+    except Exception as e:
+        # Incluso si hay un error crítico, retornamos un resultado básico
+        logger.error(f"Error crítico en validación ultra-profunda de {email}: {e}")
+        return {
+            "email": email if email else "",
+            "is_valid": False,
+            "confidence_score": 0,
+            "validation_level": "ultra_deep_error",
+            "format_analysis": {},
+            "domain_analysis": {},
+            "mx_analysis": {},
+            "smtp_analysis": {},
+            "security_analysis": {},
+            "recommendations": ["Error crítico en validación, email no recomendado"],
+            "errors": [f"Error crítico: {str(e)}"],
+            "warnings": [],
+            "processing_time": 0
+        }
+
 @router.get("/domain-info/{domain}", response_model=DomainInfo)
 async def get_domain_info(domain: str):
     """
